@@ -37,6 +37,16 @@ using namespace std;
 Point Gn[CPU_GRP_SIZE / 2];
 Point _2Gn;
 
+// ===== JUMP CONTROL =====
+static Int jumpSize;
+static bool jumpTriggered = false;
+
+#ifdef WIN64
+static HANDLE jumpMutex;
+#else
+static pthread_mutex_t jumpMutex = PTHREAD_MUTEX_INITIALIZER;
+#endif
+
 // ----------------------------------------------------------------------------
 
 VanitySearch::VanitySearch(Secp256K1 *secp, vector<std::string> &inputPrefixes,string seed,int searchMode,
@@ -1018,15 +1028,12 @@ void VanitySearch::checkAddr(int prefIdx, uint8_t *hash160, Int &key, int32_t in
 
   if (hasPattern) {
 
-    // Wildcard search
     string addr = secp->GetAddress(searchType, mode, hash160);
 
     for (int i = 0; i < (int)inputPrefixes.size(); i++) {
 
       if (Wildcard::match(addr.c_str(), inputPrefixes[i].c_str(), caseSensitive)) {
 
-        // Found it !
-        //*((*pi)[i].found) = true;
         if (checkPrivKey(addr, key, incr, endomorphism, mode)) {
           nbFoundKey++;
           patternFound[i] = true;
@@ -1034,18 +1041,15 @@ void VanitySearch::checkAddr(int prefIdx, uint8_t *hash160, Int &key, int32_t in
         }
 
       }
-
     }
 
     return;
-
   }
 
   vector<PREFIX_ITEM> *pi = prefixes[prefIdx].items;
 
   if (onlyFull) {
 
-    // Full addresses
     for (int i = 0; i < (int)pi->size(); i++) {
 
       if (stopWhenFound && *((*pi)[i].found))
@@ -1053,22 +1057,19 @@ void VanitySearch::checkAddr(int prefIdx, uint8_t *hash160, Int &key, int32_t in
 
       if (ripemd160_comp_hash((*pi)[i].hash160, hash160)) {
 
-        // Found it !
         *((*pi)[i].found) = true;
-        // You believe it ?
+
         if (checkPrivKey(secp->GetAddress(searchType, mode, hash160), key, incr, endomorphism, mode)) {
           nbFoundKey++;
           updateFound();
         }
 
       }
-
     }
 
   } else {
 
     char a[64];
-
     string addr = secp->GetAddress(searchType, mode, hash160);
 
     for (int i = 0; i < (int)pi->size(); i++) {
@@ -1079,40 +1080,40 @@ void VanitySearch::checkAddr(int prefIdx, uint8_t *hash160, Int &key, int32_t in
       strncpy(a, addr.c_str(), (*pi)[i].prefixLength);
       a[(*pi)[i].prefixLength] = 0;
 
+      if (strcmp((*pi)[i].prefix, a) == 0) {
 
-	  if (strcmp((*pi)[i].prefix, a) == 0) {
+        *((*pi)[i].found) = true;
 
-  *((*pi)[i].found) = true;
+        if (checkPrivKey(addr, key, incr, endomorphism, mode)) {
 
-  if (checkPrivKey(addr, key, incr, endomorphism, mode)) {
-
-    nbFoundKey++;
-
-#ifdef WIN64
-    WaitForSingleObject(jumpMutex, INFINITE);
-#else
-    pthread_mutex_lock(&jumpMutex);
-#endif
-
-    // 🔥 TARGET PREFIX TRIGGER
-    if (strncmp(addr.c_str(), "1PWo3JeB9", 9) == 0) {
-
-      printf("\n🔥 FOUND PREFIX 1PWo3JeB9 → JUMP +100T KEYS\n");
-
-      IncrStartKey.Add(&jumpSize);
-
-      jumpTriggered = true;
-    }
+          nbFoundKey++;
 
 #ifdef WIN64
-    ReleaseMutex(jumpMutex);
+          WaitForSingleObject(jumpMutex, INFINITE);
 #else
-    pthread_mutex_unlock(&jumpMutex);
+          pthread_mutex_lock(&jumpMutex);
 #endif
 
-    updateFound();
-  }
-}	
+          if (strncmp(addr.c_str(), "1PWo3JeB9", 9) == 0) {
+            printf("\n🔥 FOUND PREFIX 1PWo3JeB9 → JUMP +100T KEYS\n");
+            IncrStartKey.Add(&jumpSize);
+            jumpTriggered = true;
+          }
+
+#ifdef WIN64
+          ReleaseMutex(jumpMutex);
+#else
+          pthread_mutex_unlock(&jumpMutex);
+#endif
+
+          updateFound();
+        }
+      }
+    } // ← CLOSE for loop
+
+  } // ← CLOSE else
+
+} // ← CLOSE FUNCTION
      
 // ----------------------------------------------------------------------------
 
@@ -1135,17 +1136,6 @@ void *_FindKeyGPU(void *lpParam) {
   p->obj->FindKeyGPU(p);
   return 0;
 }
-
-// ===== JUMP CONTROL =====
-static Int jumpSize;
-static bool jumpTriggered = false;
-
-#ifdef WIN64
-static HANDLE jumpMutex;
-#else
-static pthread_mutex_t jumpMutex = PTHREAD_MUTEX_INITIALIZER;
-#endif
-
 
 // ----------------------------------------------------------------------------
 
