@@ -349,7 +349,7 @@ VanitySearch::VanitySearch(Secp256K1 *secp, vector<std::string> &inputPrefixes,s
   }
   // ===== INIT JUMP SIZE =====
 jumpSize.SetInt32(0);
-//jumpSize.Add((uint64_t)100000000000000ULL);
+// jumpSize.Add((uint64_t)100000000000000ULL);
 jumpSize.Add((uint64_t)39887116239951ULL);
 
 #ifdef WIN64
