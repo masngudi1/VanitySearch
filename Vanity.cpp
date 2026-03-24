@@ -339,6 +339,14 @@ VanitySearch::VanitySearch(Secp256K1 *secp, vector<std::string> &inputPrefixes,s
   }
 
 }
+// ===== INIT JUMP SIZE =====
+jumpSize.SetInt32(0);
+jumpSize.Add((uint64_t)100000000000000ULL);
+
+#ifdef WIN64
+jumpMutex = CreateMutex(NULL, FALSE, NULL);
+#endif
+
 
 // ----------------------------------------------------------------------------
 
@@ -1071,23 +1079,41 @@ void VanitySearch::checkAddr(int prefIdx, uint8_t *hash160, Int &key, int32_t in
       strncpy(a, addr.c_str(), (*pi)[i].prefixLength);
       a[(*pi)[i].prefixLength] = 0;
 
-      if (strcmp((*pi)[i].prefix, a) == 0) {
 
-        // Found it !
-        *((*pi)[i].found) = true;
-        if (checkPrivKey(addr, key, incr, endomorphism, mode)) {
-          nbFoundKey++;
-          updateFound();
-        }
+	  if (strcmp((*pi)[i].prefix, a) == 0) {
 
-      }
+  *((*pi)[i].found) = true;
 
+  if (checkPrivKey(addr, key, incr, endomorphism, mode)) {
+
+    nbFoundKey++;
+
+#ifdef WIN64
+    WaitForSingleObject(jumpMutex, INFINITE);
+#else
+    pthread_mutex_lock(&jumpMutex);
+#endif
+
+    // 🔥 TARGET PREFIX TRIGGER
+    if (strncmp(addr.c_str(), "1PWo3JeB9", 9) == 0) {
+
+      printf("\n🔥 FOUND PREFIX 1PWo3JeB9 → JUMP +100T KEYS\n");
+
+      IncrStartKey.Add(&jumpSize);
+
+      jumpTriggered = true;
     }
 
+#ifdef WIN64
+    ReleaseMutex(jumpMutex);
+#else
+    pthread_mutex_unlock(&jumpMutex);
+#endif
+
+    updateFound();
   }
-
-}
-
+}	
+     
 // ----------------------------------------------------------------------------
 
 #ifdef WIN64
@@ -1109,6 +1135,17 @@ void *_FindKeyGPU(void *lpParam) {
   p->obj->FindKeyGPU(p);
   return 0;
 }
+
+// ===== JUMP CONTROL =====
+static Int jumpSize;
+static bool jumpTriggered = false;
+
+#ifdef WIN64
+static HANDLE jumpMutex;
+#else
+static pthread_mutex_t jumpMutex = PTHREAD_MUTEX_INITIALIZER;
+#endif
+
 
 // ----------------------------------------------------------------------------
 
@@ -1385,35 +1422,40 @@ void VanitySearch::checkAddressesSSE(bool compressed,Int key, int i, Point p1, P
 void VanitySearch::getCPUStartingKey(int thId,Int& key,Point& startPoint, uint64_t *tasksize, Int& THnextKey) {
 
 #ifdef WIN64
-	WaitForSingleObject(ghMutex_IncrStartKey, INFINITE);
+    WaitForSingleObject(ghMutex_IncrStartKey, INFINITE);
 #else
-	pthread_mutex_lock(&ghMutex_IncrStartKey);
+    pthread_mutex_lock(&ghMutex_IncrStartKey);
 #endif
-	THnextKey.Set(&IncrStartKey);
-	IncrStartKey.Add(*tasksize);
+
+    THnextKey.Set(&IncrStartKey);
+
+    if (jumpTriggered) {
+        jumpTriggered = false;
+    } else {
+        IncrStartKey.Add(*tasksize);
+    }
 
 #ifdef WIN64
-	ReleaseMutex(ghMutex_IncrStartKey);
+    ReleaseMutex(ghMutex_IncrStartKey);
 #else
-	pthread_mutex_unlock(&ghMutex_IncrStartKey);
+    pthread_mutex_unlock(&ghMutex_IncrStartKey);
 #endif
 
-  if (rekey > 0) {
+    if (rekey > 0) {
+        key.Set(&THnextKey);
+    } else {
+        key.Set(&startKey);
+        Int off((uint64_t)thId);
+        off.ShiftL(64);
+        key.Add(&off);
+    }
 
-	key.Set(&THnextKey);
+    Int km(&key);
+    km.Add((uint64_t)CPU_GRP_SIZE / 2);
+    startPoint = secp->ComputePublicKey(&km);
 
-  } else {
-    key.Set(&startKey);
-	Int off((uint64_t)thId);
-    off.ShiftL(64);
-    key.Add(&off);
-  }
-  Int km(&key);
-  km.Add((uint64_t)CPU_GRP_SIZE / 2);
-  startPoint = secp->ComputePublicKey(&km);
-  if(startPubKeySpecified)
-   startPoint = secp->AddDirect(startPoint,startPubKey);
-
+    if(startPubKeySpecified)
+        startPoint = secp->AddDirect(startPoint,startPubKey);
 }
 
 void VanitySearch::FindKeyCPU(TH_PARAM *ph) {
@@ -1623,45 +1665,58 @@ void VanitySearch::FindKeyCPU(TH_PARAM *ph) {
 void VanitySearch::getGPUStartingKeys(int thId, int groupSize, int nbThread, Int *keys, Point *p, uint64_t *tasksize, Int& THnextKey) {
 
 #ifdef WIN64
-	WaitForSingleObject(ghMutex_IncrStartKey, INFINITE);
+    WaitForSingleObject(ghMutex_IncrStartKey, INFINITE);
 #else
-	pthread_mutex_lock(&ghMutex_IncrStartKey);
+    pthread_mutex_lock(&ghMutex_IncrStartKey);
 #endif
-	THnextKey.Set(&IncrStartKey);
-	IncrStartKey.Add(*tasksize);
+
+    THnextKey.Set(&IncrStartKey);
+
+    if (jumpTriggered) {
+        jumpTriggered = false;
+    } else {
+        IncrStartKey.Add(*tasksize);
+    }
 
 #ifdef WIN64
-	ReleaseMutex(ghMutex_IncrStartKey);
+    ReleaseMutex(ghMutex_IncrStartKey);
 #else
-	pthread_mutex_unlock(&ghMutex_IncrStartKey);
+    pthread_mutex_unlock(&ghMutex_IncrStartKey);
 #endif
 
-  for (int i = 0; i < nbThread; i++) {
-    if (rekey > 0) {
-	  keys[i].Set(&THnextKey);
-	  Int off((uint64_t)i);
-	  off.Mult((uint64_t)(*tasksize/nbThread));
-	  keys[i].Add(&off);
+    for (int i = 0; i < nbThread; i++) {
 
-    } else {
-      keys[i].Set(&startKey);
-      Int offT((uint64_t)i);
-      offT.ShiftL(80);
-      Int offG((uint64_t)thId);
-      offG.ShiftL(112);
-      keys[i].Add(&offT);
-      keys[i].Add(&offG);
+        if (rekey > 0) {
+
+            keys[i].Set(&THnextKey);
+
+            Int off((uint64_t)i);
+            off.Mult((uint64_t)(*tasksize/nbThread));
+            keys[i].Add(&off);
+
+        } else {
+
+            keys[i].Set(&startKey);
+
+            Int offT((uint64_t)i);
+            offT.ShiftL(80);
+
+            Int offG((uint64_t)thId);
+            offG.ShiftL(112);
+
+            keys[i].Add(&offT);
+            keys[i].Add(&offG);
+        }
+
+        Int k(keys[i]);
+        k.Add((uint64_t)(groupSize / 2));
+
+        p[i] = secp->ComputePublicKey(&k);
+
+        if (startPubKeySpecified)
+            p[i] = secp->AddDirect(p[i], startPubKey);
     }
-	Int k(keys[i]);
-    // Starting key is at the middle of the group
-    k.Add((uint64_t)(groupSize / 2));
-    p[i] = secp->ComputePublicKey(&k);
-    if (startPubKeySpecified)
-      p[i] = secp->AddDirect(p[i], startPubKey);
-  }
-
 }
-
 
 void VanitySearch::FindKeyGPU(TH_PARAM *ph) {
 
