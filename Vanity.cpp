@@ -337,15 +337,14 @@ VanitySearch::VanitySearch(Secp256K1 *secp, vector<std::string> &inputPrefixes,s
   if (sessFile.length() > 0) {
 	  fprintf(stderr,"Save progress to '%s' every 60sec and +%.0f Mkeys\n", sessFile.c_str(), (double)rekey);
   }
-
-}
-// ===== INIT JUMP SIZE =====
+  // ===== INIT JUMP SIZE =====
 jumpSize.SetInt32(0);
 jumpSize.Add((uint64_t)100000000000000ULL);
 
 #ifdef WIN64
 jumpMutex = CreateMutex(NULL, FALSE, NULL);
 #endif
+}
 
 
 // ----------------------------------------------------------------------------
